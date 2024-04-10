@@ -32,9 +32,6 @@
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Analysis/LoopAnalysisManager.h"
 #include "llvm/IR/PassManager.h"
-//#include "llvm/Analysis/CGSCCAnalysisManager.h"
-//#include "llvm/Analysis/ModuleAnalysisManager.h"
-
 
 using namespace llvm;
 
@@ -44,9 +41,8 @@ LLVMContext& getGlobalContext() {
   return Context;
 }
 
-
 static void SoftwareFaultTolerance(Module *);
-
+static void BonusFeature(Module *);
 static void print_csv_file(std::string outputfile);
 
 static cl::opt<std::string>
@@ -87,8 +83,6 @@ static cl::opt<bool>
         NoControlProtection("no-control-protection",
               cl::desc("Do not perform control flow protection."),
               cl::init(false));
-
-
 
 void RunO2(Module *M);
 void BuildHelperFunctions(Module *);
@@ -155,8 +149,7 @@ int main(int argc, char **argv) {
     return 0;
 }
 
-static void print_csv_file(std::string outputfile)
-{
+static void print_csv_file(std::string outputfile) {
     std::ofstream stats(outputfile + ".stats");
     auto a = GetStatistics();
     for (auto p : a) {
@@ -168,26 +161,43 @@ static void print_csv_file(std::string outputfile)
 // Collect this statistic; increment for each instruction you add.
 static llvm::Statistic SWFTAdded = {"", "SWFTadd", "SWFT added instructions"};
 
-
-
 static void SoftwareFaultTolerance(Module *M) {
-  Module::FunctionListType &list = M->getFunctionList();
+    Module::FunctionListType &list = M->getFunctionList();
 
-  std::vector<Function*> flist;
-  // FIND THE ASSERT FUNCTIONS AND DO NOT INSTRUMENT THEM
-  for(Module::FunctionListType::iterator it = list.begin(); it!=list.end(); it++) {
-    Function *fptr = &*it;
-    if (fptr->size() > 0 && fptr != AssertFT.getCallee() && fptr != AssertCFG.getCallee())
-      flist.push_back(fptr);
-  }
+    // Iterate through functions to find the ones to protect
+    for (auto &F : list) {
+        // Skip if the function is an assert function
+        if (&F == AssertFT.getCallee() || &F == AssertCFG.getCallee())
+            continue;
 
-  // PROTECT CODE IN EACH FUNCTION
-  for(std::vector<Function*>::iterator it=flist.begin(); it!=flist.end(); it++)
-    {
-      // CALL A FUNCTION TO REPLICATE CODE in *it
+        // Replicate the function code
+        if (!NoReplicate) {
+            Function *ReplicatedFunc = Function::Create(F.getFunctionType(), F.getLinkage(), "replicated_" + F.getName(), M);
+            ReplicatedFunc->getBasicBlockList().splice(ReplicatedFunc->begin(), F.getBasicBlockList());
+            F.getParent()->getFunctionList().push_back(ReplicatedFunc);
+        }
+
+        // Protect control flow if needed
+        if (!NoControlProtection) {
+            for (auto &BB : F) {
+                // Add redundancy to branch instructions
+                for (auto &I : BB) {
+                    if (auto *BranchInst = dyn_cast<BranchInst>(&I)) {
+                        // Add a redundant branch instruction
+                        if (BranchInst->isConditional()) {
+                            auto *NewBI = BranchInst::Create(BranchInst->getSuccessor(0), BranchInst->getSuccessor(1), BranchInst->getCondition(), &I);
+                        } else {
+                            auto *NewBI = BranchInst::Create(BranchInst->getSuccessor(0), &I);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Call bonus function if bonus flag is set
+    if (Bonus) {
+        // Placeholder for bonus feature implementation
+        BonusFeature(M);
     }
 }
-
-
-
-
